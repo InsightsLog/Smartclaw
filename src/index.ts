@@ -43,6 +43,8 @@ export {
 
 export type { SmartclawConfig, GatewayOptions, PipelineResult };
 
+const DEFAULT_SYSTEM_PROMPT = "You are Smartclaw, a helpful AI assistant.";
+
 /**
  * Top-level Smartclaw assistant that orchestrates all subsystems.
  */
@@ -84,7 +86,7 @@ export class Smartclaw {
       id: "default-agent",
       name: "Smartclaw",
       description: "General-purpose AI assistant",
-      systemPrompt: "You are Smartclaw, a helpful AI assistant.",
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
     });
 
     // Register built-in skill factories
@@ -183,7 +185,7 @@ export class Smartclaw {
     }
 
     // 5. Build system prompt with agent context
-    const systemPrompt = agent?.systemPrompt ?? "You are Smartclaw, a helpful AI assistant.";
+    const systemPrompt = agent?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     const agentContext = agent?.buildContext() ?? "";
     const fullSystemPrompt = agentContext
       ? `${systemPrompt}\n\nConversation history:\n${agentContext}`
