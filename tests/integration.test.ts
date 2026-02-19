@@ -71,7 +71,7 @@ describe("Smartclaw Integration", () => {
   });
 
   it("processes a writing message and uses summarize skill", async () => {
-    const result = await claw.processMessage(makeMessage("write a draft of a blog post about AI"));
+    const result = await claw.processMessage(makeMessage("please write and edit a draft of a blog essay"));
     expect(result.skillsUsed).toContain("summarize");
   });
 

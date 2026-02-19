@@ -70,7 +70,7 @@ export function createHelpSkill(getSkillList: () => Array<{ name: string; descri
 
 /**
  * Summarize skill — produces a brief summary of the input text.
- * Simple extractive approach: returns the first sentence or first 200 chars.
+ * Simple extractive approach: returns the first two sentences or first 200 chars.
  */
 export function createSummarizeSkill(): SkillDefinition {
   return {
