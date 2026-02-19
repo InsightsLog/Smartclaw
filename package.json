@@ -1,0 +1,27 @@
+{
+  "name": "smartclaw",
+  "version": "0.1.0",
+  "description": "The Intelligent Personal AI Assistant — combining the best of OpenClaw, Zeroclaw, Nanoclaw, Trustclaw, and ClawdMatrix.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.1"
+  }
+}
