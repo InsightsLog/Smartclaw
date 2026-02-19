@@ -109,3 +109,38 @@ export interface QualityGateResult {
   stage: string;
   reason?: string;
 }
+
+/** Agent operational status. */
+export type AgentStatus = "idle" | "active" | "busy" | "offline";
+
+/** Configuration used to create an agent. */
+export interface AgentConfig {
+  /** Unique agent identifier. */
+  id: Id;
+  /** Human-readable name. */
+  name: string;
+  /** Short description of what this agent does. */
+  description: string;
+  /** System prompt that defines the agent's personality and behaviour. */
+  systemPrompt: string;
+  /** Domains this agent specialises in (e.g. "code", "research"). */
+  domains?: string[];
+  /** Skill names this agent is allowed to use. Empty means all. */
+  allowedSkills?: string[];
+  /** Arbitrary personality / config metadata. */
+  personality?: Record<string, unknown>;
+}
+
+/** A single entry in an agent's memory. */
+export interface AgentMemoryEntry {
+  /** Unique entry id. */
+  id: Id;
+  /** Role of the speaker. */
+  role: "user" | "agent" | "system";
+  /** Content of the memory. */
+  content: string;
+  /** When the memory was recorded. */
+  timestamp: number;
+  /** Optional metadata (e.g. messageId, skills used). */
+  metadata?: Record<string, unknown>;
+}
