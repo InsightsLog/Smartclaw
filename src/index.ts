@@ -2,7 +2,7 @@
  * Smartclaw — Main entry point.
  *
  * Exports the Smartclaw class which wires together the gateway,
- * channels, security, prompt engine, and skills subsystems.
+ * channels, security, prompt engine, skills, and agents subsystems.
  */
 
 import { Gateway, type GatewayOptions } from "./gateway/gateway.js";
@@ -17,6 +17,8 @@ import { IntentTriangulator } from "./prompt/triangulator.js";
 import { SkillsRegistry } from "./skills/registry.js";
 import { SkillLoader } from "./skills/loader.js";
 import { getBuiltinFactories } from "./skills/builtins.js";
+import { Agent } from "./agents/agent.js";
+import { AgentRegistry } from "./agents/registry.js";
 import { loadConfig, type SmartclawConfig } from "./config/config.js";
 import type { Message, MessageResult, SkillOutput } from "./types.js";
 
@@ -34,6 +36,8 @@ export {
   SkillsRegistry,
   SkillLoader,
   getBuiltinFactories,
+  Agent,
+  AgentRegistry,
   loadConfig,
 };
 
@@ -51,6 +55,7 @@ export class Smartclaw {
   readonly promptEngine: PromptEngine;
   readonly skills: SkillsRegistry;
   readonly skillLoader: SkillLoader;
+  readonly agents: AgentRegistry;
   readonly config: SmartclawConfig;
 
   constructor(config?: SmartclawConfig) {
@@ -72,6 +77,15 @@ export class Smartclaw {
     });
     this.skills = new SkillsRegistry();
     this.skillLoader = new SkillLoader();
+    this.agents = new AgentRegistry();
+
+    // Register a default agent so routing always resolves
+    this.agents.register({
+      id: "default-agent",
+      name: "Smartclaw",
+      description: "General-purpose AI assistant",
+      systemPrompt: "You are Smartclaw, a helpful AI assistant.",
+    });
 
     // Register built-in skill factories
     const builtins = getBuiltinFactories(() =>
@@ -109,11 +123,13 @@ export class Smartclaw {
   /**
    * Process a message end-to-end through all subsystems:
    *  1. Route the message to an agent
-   *  2. Check security policies (rate limit)
-   *  3. Triage intent & load matching skills
-   *  4. Run the five-stage prompt pipeline
-   *  5. Execute relevant skills
-   *  6. Return a unified MessageResult
+   *  2. Resolve the living agent (status, personality, memory)
+   *  3. Check security policies (rate limit)
+   *  4. Triage intent & load matching skills
+   *  5. Run the five-stage prompt pipeline with agent context
+   *  6. Execute relevant skills (filtered by agent permissions)
+   *  7. Record interaction in agent memory
+   *  8. Return a unified MessageResult
    */
   async processMessage(message: Message): Promise<MessageResult> {
     const startTime = Date.now();
@@ -126,10 +142,27 @@ export class Smartclaw {
       ruleName: route.ruleName,
     });
 
-    // 2. Rate-limit check
+    // 2. Resolve agent
+    const agent = this.agents.get(route.agentId);
+    if (agent && agent.status === "offline") {
+      this.audit.warn("agent.offline", message.sender, { agentId: agent.id });
+      return {
+        messageId: message.id,
+        response: `Agent "${agent.name}" is currently offline.`,
+        skillsUsed: [],
+        tokenCount: 0,
+        durationMs: Date.now() - startTime,
+      };
+    }
+    if (agent) {
+      agent.activate();
+    }
+
+    // 3. Rate-limit check
     const rateCheck = this.policy.checkRateLimit();
     if (!rateCheck.allowed) {
       this.audit.warn("message.rate_limited", message.sender);
+      if (agent) agent.deactivate();
       return {
         messageId: message.id,
         response: "Rate limit exceeded. Please try again later.",
@@ -139,7 +172,7 @@ export class Smartclaw {
       };
     }
 
-    // 3. Triage intent and load skills
+    // 4. Triage intent and load skills
     const intent = this.promptEngine.triageIntent(message.content);
     const loaded = this.skillLoader.loadForIntent(intent, this.skills);
 
@@ -149,17 +182,24 @@ export class Smartclaw {
       if (skill) this.promptEngine.registerSkill(skill);
     }
 
-    // 4. Pipeline
-    const pipeline = this.promptEngine.processMessage(message.content);
+    // 5. Build system prompt with agent context
+    const systemPrompt = agent?.systemPrompt ?? "You are Smartclaw, a helpful AI assistant.";
+    const agentContext = agent?.buildContext() ?? "";
+    const fullSystemPrompt = agentContext
+      ? `${systemPrompt}\n\nConversation history:\n${agentContext}`
+      : systemPrompt;
 
-    // 5. Execute injected skills and collect results
+    const pipeline = this.promptEngine.processMessage(message.content, fullSystemPrompt);
+
+    // 6. Execute injected skills, respecting agent permissions
     const skillOutputs: Array<{ name: string; output: SkillOutput }> = [];
     for (const skillName of pipeline.injectedSkills) {
+      if (agent && !agent.canUseSkill(skillName)) continue;
       if (this.skills.has(skillName)) {
         try {
           const output = await this.skills.execute(skillName, {
             query: message.content,
-            context: { intent, route },
+            context: { intent, route, agentId: agent?.id },
           });
           skillOutputs.push({ name: skillName, output });
         } catch (err) {
@@ -171,7 +211,7 @@ export class Smartclaw {
       }
     }
 
-    // 6. Build response
+    // 7. Build response
     const responseParts: string[] = [];
     if (skillOutputs.length > 0) {
       for (const { name, output } of skillOutputs) {
@@ -184,8 +224,20 @@ export class Smartclaw {
     const response = responseParts.join("\n");
     const durationMs = Date.now() - startTime;
 
+    // 8. Record in agent memory & stats
+    if (agent) {
+      agent.remember("user", message.content, { messageId: message.id });
+      agent.remember("agent", response, {
+        messageId: message.id,
+        skillsUsed: skillOutputs.map((s) => s.name),
+      });
+      agent.recordInteraction();
+      agent.deactivate();
+    }
+
     this.audit.info("message.processed", message.sender, {
       messageId: message.id,
+      agentId: agent?.id,
       skillsUsed: skillOutputs.map((s) => s.name),
       tokenEstimate: pipeline.tokenEstimate,
       durationMs,

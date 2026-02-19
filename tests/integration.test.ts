@@ -40,6 +40,7 @@ describe("Smartclaw Integration", () => {
     expect(claw.promptEngine).toBeDefined();
     expect(claw.skills).toBeDefined();
     expect(claw.skillLoader).toBeDefined();
+    expect(claw.agents).toBeDefined();
   });
 
   it("registers built-in skill factories on construction", () => {
@@ -120,5 +121,121 @@ describe("Smartclaw Integration", () => {
   it("returns token count in result", async () => {
     const result = await claw.processMessage(makeMessage("hello world"));
     expect(result.tokenCount).toBeGreaterThan(0);
+  });
+});
+
+describe("Smartclaw Agent Integration", () => {
+  let claw: Smartclaw;
+
+  beforeEach(() => {
+    claw = new Smartclaw(makeConfig());
+  });
+
+  it("registers a default agent on construction", () => {
+    expect(claw.agents.has("default-agent")).toBe(true);
+    const defaultAgent = claw.agents.get("default-agent")!;
+    expect(defaultAgent.name).toBe("Smartclaw");
+    expect(defaultAgent.status).toBe("idle");
+  });
+
+  it("uses the default agent's system prompt in pipeline", async () => {
+    const result = await claw.processMessage(makeMessage("hello"));
+    expect(result.response).toContain("Smartclaw");
+  });
+
+  it("records interaction in agent memory after processing", async () => {
+    await claw.processMessage(makeMessage("hello"));
+    const agent = claw.agents.get("default-agent")!;
+    expect(agent.memorySize).toBe(2); // user + agent
+    expect(agent.memory[0].role).toBe("user");
+    expect(agent.memory[0].content).toBe("hello");
+    expect(agent.memory[1].role).toBe("agent");
+    expect(agent.messagesHandled).toBe(1);
+  });
+
+  it("accumulates memory across messages", async () => {
+    await claw.processMessage(makeMessage("first message", "m1"));
+    await claw.processMessage(makeMessage("second message", "m2"));
+    const agent = claw.agents.get("default-agent")!;
+    expect(agent.memorySize).toBe(4); // 2 per message
+    expect(agent.messagesHandled).toBe(2);
+  });
+
+  it("uses custom agent system prompt when routed", async () => {
+    claw.agents.register({
+      id: "code-agent",
+      name: "CodeBot",
+      description: "Expert code assistant",
+      systemPrompt: "You are CodeBot, an expert programmer.",
+      domains: ["code"],
+    });
+    claw.router.addRule({
+      name: "code-rule",
+      channels: [],
+      pattern: /code/,
+      agentId: "code-agent",
+      priority: 10,
+    });
+
+    const result = await claw.processMessage(makeMessage("fix this code bug"));
+    expect(result.response).toContain("CodeBot");
+
+    const codeAgent = claw.agents.get("code-agent")!;
+    expect(codeAgent.messagesHandled).toBe(1);
+    expect(codeAgent.memorySize).toBeGreaterThan(0);
+  });
+
+  it("rejects messages to offline agents", async () => {
+    const agent = claw.agents.get("default-agent")!;
+    agent.goOffline();
+
+    const result = await claw.processMessage(makeMessage("hello"));
+    expect(result.response).toContain("offline");
+    expect(result.skillsUsed).toEqual([]);
+  });
+
+  it("agent status transitions through processing", async () => {
+    const agent = claw.agents.get("default-agent")!;
+    expect(agent.status).toBe("idle");
+    await claw.processMessage(makeMessage("hello"));
+    // After processing completes, agent should be back to idle
+    expect(agent.status).toBe("idle");
+  });
+
+  it("respects agent skill restrictions", async () => {
+    // Register an agent that can only use echo
+    claw.agents.register({
+      id: "restricted-agent",
+      name: "RestrictedBot",
+      description: "A restricted agent",
+      systemPrompt: "You are restricted.",
+      allowedSkills: ["echo"],
+    });
+    claw.router.addRule({
+      name: "restricted-rule",
+      channels: [],
+      pattern: /calculate/,
+      agentId: "restricted-agent",
+      priority: 20,
+    });
+
+    const result = await claw.processMessage(makeMessage("calculate 2 + 2"));
+    // calculator skill should be blocked by the restricted agent
+    expect(result.skillsUsed).not.toContain("calculator");
+  });
+
+  it("includes agent context from memory in prompt", async () => {
+    // Send a first message to build up memory
+    await claw.processMessage(makeMessage("my name is Alice", "m1"));
+    // Second message should include conversation history in the prompt
+    const result = await claw.processMessage(makeMessage("what is my name?", "m2"));
+    // The response prompt should contain the earlier context
+    expect(result.response).toContain("Alice");
+  });
+
+  it("logs agent id in audit entries", async () => {
+    await claw.processMessage(makeMessage("hello"));
+    const processedEntry = claw.audit.getEntries().find((e) => e.event === "message.processed");
+    expect(processedEntry?.detail.agentId).toBe("default-agent");
   });
 });
